@@ -12,7 +12,7 @@ const { TEMP_MUSIC_DIR } = require("../../config");
 const { getSession, runDb } = require("../../core/sessionManager");
 const extractVideoId = require("../../utils/extractVideoId");
 const sleep = require("../../utils/sleep");
-const { downloadWithYtDlp } = require("./downloader");
+const { downloadWithYtDlp, downloadWithSpotDL } = require("./downloader");
 const { log, error } = require("../../utils/logger");
 
 async function play(interaction, url) {
@@ -52,7 +52,8 @@ async function play(interaction, url) {
           resolve();
         } else {
           try {
-            await downloadWithYtDlp({ url, outPath: filePath });
+            // await downloadWithYtDlp({ url, outPath: filePath });
+            await downloadWithSpotDL({ url, outPath: filePath });
             await sleep(500);
 
             songData = {
