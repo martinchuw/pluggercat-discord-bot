@@ -54,13 +54,13 @@ async function downloadWithSpotDL({
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`spotdl salió con código ${code}`));
+      else reject(new Error(`spotdl exited with code ${code}`));
     });
   });
 
   const exists = fs.existsSync(outPath);
   if (!exists) {
-    throw new Error("spotdl terminó sin crear el archivo esperado.");
+    throw new Error("spotdl finished without creating the expected file.");
   }
 
   return outPath;
