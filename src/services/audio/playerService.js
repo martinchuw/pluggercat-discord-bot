@@ -25,8 +25,7 @@ const {
 const {
   getSpotifyMetaWithPuppeteer,
 } = require("../../services/audio/spotifyPuppeteer");
-const { ytSearchFirst } = require("../../services/audio/ytSearch");
-const { getYtDlpInfo } = require("../../services/audio/ydlpInfo");
+const { ytSearchFirst, getYtDlpInfo } = require("../../services/audio/ytdlpService");
 
 async function play(interaction, query, options = {}) {
   const guildId = interaction.guild.id;
