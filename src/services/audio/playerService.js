@@ -16,18 +16,20 @@ const { downloadWithYtDlp, downloadWithSpotDL } = require("./downloader");
 const { log, error } = require("../../utils/logger");
 
 const isSpotifyUrl = require("../../utils/isSpotifyUrl");
-const { getSpotifyMetaWithPuppeteer } = require("../../services/audio/spotifyPuppeteer");
+const isSoundcloudUrl = require("../../utils/isSoundcloudUrl");
+const {
+  getSpotifyMetaWithPuppeteer,
+} = require("../../services/audio/spotifyPuppeteer");
 const { ytSearchFirst } = require("../../services/audio/ytSearch");
+const { getYtDlpInfo } = require("../../services/audio/ydlpInfo");
 
 async function play(interaction, url) {
   const guildId = interaction.guild.id;
   const voiceChannel = interaction.member?.voice?.channel;
-  if (!voiceChannel) {
+  if (!voiceChannel)
     return interaction.reply("You must join a voice channel first.");
-  }
 
   await interaction.deferReply();
-
   const session = getSession(guildId);
 
   let videoId;
@@ -42,20 +44,25 @@ async function play(interaction, url) {
         waitUntil: "domcontentloaded",
         blockMedia: true,
       });
-
       if (!meta?.title) throw new Error("No title from Spotify via scraping");
       const query = meta.artist ? `${meta.title} ${meta.artist}` : meta.title;
-
       const found = await ytSearchFirst(query);
       videoId = found.id;
       effectiveUrl = found.url;
+    } else if (isSoundcloudUrl(url)) {
+      const info = await getYtDlpInfo(url);
+      if (!info?.id) throw new Error("No SoundCloud id from yt-dlp");
+      videoId = `sc_${info.id}`;
+      effectiveUrl = url;
+
     } else {
       videoId = extractVideoId(url);
+      if (!videoId) throw new Error("Invalid YouTube URL");
     }
   } catch (e) {
     error("Resolve error:", e);
     return interaction.editReply(
-      "Invalid or unsupported URL (Spotify/YouTube)."
+      "Invalid or unsupported URL (Spotify/YouTube/SoundCloud)."
     );
   }
 
@@ -85,7 +92,7 @@ async function play(interaction, url) {
           } else {
             try {
               await downloadWithYtDlp({ url: effectiveUrl, outPath: filePath });
-              await sleep(500);
+              await sleep(300);
 
               songData = {
                 videoId,
@@ -96,10 +103,7 @@ async function play(interaction, url) {
               session.db.run(
                 "INSERT INTO queue (video_id, url, file_path) VALUES (?, ?, ?)",
                 [videoId, effectiveUrl, filePath],
-                (e2) => {
-                  if (e2) reject(e2);
-                  else resolve();
-                }
+                (e2) => (e2 ? reject(e2) : resolve())
               );
             } catch (dErr) {
               reject(dErr);
