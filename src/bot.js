@@ -1,6 +1,4 @@
-const { Client, GatewayIntentBits, Collection } = require("discord.js");
-const fs = require("fs");
-const path = require("path");
+const { Client, GatewayIntentBits, Partials, Collection } = require("discord.js");
 const { DISCORD_TOKEN } = require("./config");
 const { loadCommands } = require("./core/commandHandler");
 const { onReady } = require("./events/ready");
@@ -17,34 +15,48 @@ if (!DISCORD_TOKEN) {
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildVoiceStates,
-    GatewayIntentBits.DirectMessages
-  ]
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.DirectMessageReactions,
+  ],
+  partials: [
+    Partials.Message,
+    Partials.Channel,
+    Partials.Reaction,
+    Partials.User,
+    Partials.GuildMember,
+  ],
+  sweepers: {
+    messages: {
+      interval: 60,
+      lifetime: 60 * 10,
+    },
+  },
 });
 
-// Attach a shared context to client (useful for passing utilities)
 client.context = { cleanupSession };
 
-// Load commands
 const commands = loadCommands();
 client.commands = commands;
 
-// Build JSON for registration
 const commandsJson = [...commands.values()].map(c => c.data.toJSON());
 
-// Wire events
 client.once("ready", () => onReady(client, commandsJson));
 client.on("interactionCreate", onInteractionCreate(commands));
 client.on("voiceStateUpdate", onVoiceStateUpdate(client, cleanupSession));
 
-// Graceful shutdown
+client.on("error", (e) => error("Client error:", e));
+client.on("shardError", (e) => error("Shard error:", e));
+process.on("unhandledRejection", (e) => error("Unhandled promise rejection:", e));
+
 process.on("SIGINT", async () => {
   log("Shutting down...");
   try {
-    // No global cleanup beyond per-guild sessions since they are on-demand
+    await client.destroy();
   } finally {
     process.exit(0);
   }
