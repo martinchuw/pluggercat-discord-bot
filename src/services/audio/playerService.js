@@ -48,12 +48,12 @@ async function play(interaction, query, options = {}) {
       videoId = found.id;
       effectiveUrl = found.url;
     } else {
-      // Handle URLs based on detected platform
       const detectedPlatform = platform || detectPlatform(query);
-      
+
       switch (detectedPlatform) {
-        case 'spotify':
-          if (!isSpotifyUrl(query)) throw new Error("Invalid Spotify URL format");
+        case "spotify":
+          if (!isSpotifyUrl(query))
+            throw new Error("Invalid Spotify URL format");
           const meta = await getSpotifyMetaWithPuppeteer(query, {
             headless: "new",
             timeoutMs: 20000,
@@ -61,31 +61,41 @@ async function play(interaction, query, options = {}) {
             waitUntil: "domcontentloaded",
             blockMedia: true,
           });
-          if (!meta?.title) throw new Error("No title from Spotify via scraping");
-          const searchQuery = meta.artist ? `${meta.title} ${meta.artist}` : meta.title;
+          if (!meta?.title)
+            throw new Error("No title from Spotify via scraping");
+          const searchQuery = meta.artist
+            ? `${meta.title} ${meta.artist}`
+            : meta.title;
           const found = await ytSearchFirst(searchQuery);
-          if (!found) throw new Error("No YouTube equivalent found for Spotify track");
+          if (!found)
+            throw new Error("No YouTube equivalent found for Spotify track");
           videoId = found.id;
           effectiveUrl = found.url;
           break;
 
-        case 'soundcloud':
-          if (!isSoundcloudUrl(query)) throw new Error("Invalid SoundCloud URL format");
+        case "soundcloud":
+          if (!isSoundcloudUrl(query))
+            throw new Error("Invalid SoundCloud URL format");
           const info = await getYtDlpInfo(query);
           if (!info?.id) throw new Error("No SoundCloud id from yt-dlp");
           videoId = `sc_${info.id}`;
           effectiveUrl = query;
           break;
 
-        case 'youtube_music':
-          if (!isYouTubeMusicUrl(query)) throw new Error("Invalid YouTube Music URL format");
+        case "youtube_music":
+          if (!isYouTubeMusicUrl(query))
+            throw new Error("Invalid YouTube Music URL format");
           videoId = extractVideoId(query);
-          if (!videoId) throw new Error("Could not extract video ID from YouTube Music URL");
+          if (!videoId)
+            throw new Error(
+              "Could not extract video ID from YouTube Music URL"
+            );
           effectiveUrl = query;
           break;
 
-        case 'youtube':
-          if (!isYouTubeUrl(query)) throw new Error("Invalid YouTube URL format");
+        case "youtube":
+          if (!isYouTubeUrl(query))
+            throw new Error("Invalid YouTube URL format");
           videoId = extractVideoId(query);
           if (!videoId) throw new Error("Invalid YouTube URL");
           effectiveUrl = query;
@@ -100,9 +110,11 @@ async function play(interaction, query, options = {}) {
     }
   } catch (e) {
     error("Resolve error:", e);
-    const platformName = platform || (isUrl ? detectPlatform(query) : 'search');
+    const platformName = platform || (isUrl ? detectPlatform(query) : "search");
     return interaction.editReply(
-      `Failed to process ${platformName} ${isUrl ? 'URL' : 'search'}: ${e.message}`
+      `Failed to process ${platformName} ${isUrl ? "URL" : "search"}: ${
+        e.message
+      }`
     );
   }
 
