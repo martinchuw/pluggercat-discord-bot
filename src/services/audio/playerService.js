@@ -5,7 +5,7 @@ const {
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus,
-  VoiceConnectionStatus
+  VoiceConnectionStatus,
 } = require("@discordjs/voice");
 
 const { TEMP_MUSIC_DIR } = require("../../config");
@@ -14,6 +14,10 @@ const extractVideoId = require("../../utils/extractVideoId");
 const sleep = require("../../utils/sleep");
 const { downloadWithYtDlp, downloadWithSpotDL } = require("./downloader");
 const { log, error } = require("../../utils/logger");
+
+const isSpotifyUrl = require("../../utils/isSpotifyUrl");
+const { getSpotifyMetaWithPuppeteer } = require("../../services/audio/spotifyPuppeteer");
+const { ytSearchFirst } = require("../../services/audio/ytSearch");
 
 async function play(interaction, url) {
   const guildId = interaction.guild.id;
@@ -25,58 +29,90 @@ async function play(interaction, url) {
   await interaction.deferReply();
 
   const session = getSession(guildId);
+
   let videoId;
+  let effectiveUrl = url;
+
   try {
-    videoId = extractVideoId(url);
+    if (isSpotifyUrl(url)) {
+      const meta = await getSpotifyMetaWithPuppeteer(url, {
+        headless: "new",
+        timeoutMs: 20000,
+        retries: 1,
+        waitUntil: "domcontentloaded",
+        blockMedia: true,
+      });
+
+      if (!meta?.title) throw new Error("No title from Spotify via scraping");
+      const query = meta.artist ? `${meta.title} ${meta.artist}` : meta.title;
+
+      const found = await ytSearchFirst(query);
+      videoId = found.id;
+      effectiveUrl = found.url;
+    } else {
+      videoId = extractVideoId(url);
+    }
   } catch (e) {
-    return interaction.editReply("Invalid YouTube URL.");
+    error("Resolve error:", e);
+    return interaction.editReply(
+      "Invalid or unsupported URL (Spotify/YouTube)."
+    );
   }
 
   const filePath = path.join(TEMP_MUSIC_DIR, `${videoId}.mp3`);
 
-  // Upsert queue entry
   let songData;
   try {
     await new Promise((resolve, reject) => {
-      session.db.get("SELECT * FROM queue WHERE video_id = ?", [videoId], async (err, row) => {
-        if (err) return reject(err);
+      session.db.get(
+        "SELECT * FROM queue WHERE video_id = ?",
+        [videoId],
+        async (err, row) => {
+          if (err) return reject(err);
 
-        if (row) {
-          session.db.run("UPDATE queue SET download_count = download_count + 1 WHERE video_id = ?", [videoId]);
-          songData = {
-            videoId: row.video_id,
-            url: row.url,
-            filePath: row.file_path,
-            downloadCount: row.download_count + 1
-          };
-          resolve();
-        } else {
-          try {
-            // await downloadWithYtDlp({ url, outPath: filePath });
-            await downloadWithSpotDL({ url, outPath: filePath });
-            await sleep(500);
-
+          if (row) {
+            session.db.run(
+              "UPDATE queue SET download_count = download_count + 1 WHERE video_id = ?",
+              [videoId]
+            );
             songData = {
-              videoId,
-              url,
-              filePath,
-              downloadCount: 1
+              videoId: row.video_id,
+              url: row.url,
+              filePath: row.file_path,
+              downloadCount: row.download_count + 1,
             };
-            session.db.run("INSERT INTO queue (video_id, url, file_path) VALUES (?, ?, ?)", [videoId, url, filePath], (e2) => {
-              if (e2) reject(e2); else resolve();
-            });
-          } catch (dErr) {
-            reject(dErr);
+            resolve();
+          } else {
+            try {
+              await downloadWithYtDlp({ url: effectiveUrl, outPath: filePath });
+              await sleep(500);
+
+              songData = {
+                videoId,
+                url: effectiveUrl,
+                filePath,
+                downloadCount: 1,
+              };
+              session.db.run(
+                "INSERT INTO queue (video_id, url, file_path) VALUES (?, ?, ?)",
+                [videoId, effectiveUrl, filePath],
+                (e2) => {
+                  if (e2) reject(e2);
+                  else resolve();
+                }
+              );
+            } catch (dErr) {
+              reject(dErr);
+            }
           }
         }
-      });
+      );
     });
   } catch (dbErr) {
     error("DB/Download error:", dbErr);
     return interaction.editReply("Failed to process the request.");
   }
 
-  // Enqueue in memory
   session.queue.push(songData);
 
   if (!session.isPlaying) {
@@ -84,7 +120,7 @@ async function play(interaction, url) {
   }
 
   const pos = session.queue.length;
-  return interaction.editReply(`Queued (#${pos}): ${url}`);
+  return interaction.editReply(`Queued (#${pos}): ${songData.url}`);
 }
 
 async function playNext(interaction) {
@@ -104,11 +140,14 @@ async function playNext(interaction) {
   }
 
   // Connect if needed
-  if (!session.connection || session.connection.state.status === VoiceConnectionStatus.Disconnected) {
+  if (
+    !session.connection ||
+    session.connection.state.status === VoiceConnectionStatus.Disconnected
+  ) {
     session.connection = joinVoiceChannel({
       channelId: voiceChannel.id,
       guildId: guildId,
-      adapterCreator: interaction.guild.voiceAdapterCreator
+      adapterCreator: interaction.guild.voiceAdapterCreator,
     });
 
     await new Promise((resolve) => {
@@ -141,13 +180,17 @@ async function playNext(interaction) {
     }
 
     setTimeout(async () => {
-      const stillQueued = session.queue.some(s => s.videoId === finished.videoId);
+      const stillQueued = session.queue.some(
+        (s) => s.videoId === finished.videoId
+      );
       if (!stillQueued && finished.downloadCount === 1) {
         try {
           if (fs.existsSync(finished.filePath)) {
             fs.unlinkSync(finished.filePath);
           }
-          await runDb(session, "DELETE FROM queue WHERE video_id = ?", [finished.videoId]);
+          await runDb(session, "DELETE FROM queue WHERE video_id = ?", [
+            finished.videoId,
+          ]);
         } catch (e) {
           // best-effort cleanup
         }
@@ -169,7 +212,10 @@ async function playNext(interaction) {
 
 async function pause(interaction) {
   const session = getSession(interaction.guild.id);
-  if (session.currentPlayer && session.currentPlayer.state.status === "playing") {
+  if (
+    session.currentPlayer &&
+    session.currentPlayer.state.status === "playing"
+  ) {
     session.currentPlayer.pause();
     return interaction.reply("Paused.");
   }
@@ -178,7 +224,10 @@ async function pause(interaction) {
 
 async function resume(interaction) {
   const session = getSession(interaction.guild.id);
-  if (session.currentPlayer && session.currentPlayer.state.status === "paused") {
+  if (
+    session.currentPlayer &&
+    session.currentPlayer.state.status === "paused"
+  ) {
     session.currentPlayer.unpause();
     return interaction.reply("Resumed.");
   }
@@ -224,5 +273,5 @@ module.exports = {
   resume,
   skip,
   stop,
-  getQueueText
+  getQueueText,
 };
