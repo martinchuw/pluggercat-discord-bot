@@ -10,7 +10,7 @@ const {
 const {
   activeVotes,
   insertHistory,
-} = require("./votekickService");
+} = require("../../services/moderation/votekickService");
 const { error } = require("../../utils/logger");
 
 module.exports = {
