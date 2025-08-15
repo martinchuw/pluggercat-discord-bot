@@ -2,7 +2,7 @@ const fs = require("fs").promises;
 const path = require("path");
 const FormData = require("form-data");
 const fetch = require("node-fetch");
-const { error, info } = require("../../utils/logger");
+const { error } = require("../../utils/logger");
 
 const LITTERBOX_API_ENDPOINT =
   "https://litterbox.catbox.moe/resources/internals/api.php";

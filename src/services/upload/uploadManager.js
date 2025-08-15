@@ -1,6 +1,6 @@
 const CatboxService = require("./catboxService");
 const { LitterboxService, FileLifetime } = require("./litterboxService");
-const { info, error } = require("../../utils/logger");
+const { log, error } = require("../../utils/logger");
 
 // Upload service types
 const UPLOAD_SERVICES = {
@@ -22,7 +22,7 @@ class UploadManager {
     // Initialize Litterbox service
     this.services.set(UPLOAD_SERVICES.LITTERBOX, new LitterboxService());
 
-    info("Upload services initialized");
+    log("Upload services initialized");
   }
 
   /**
@@ -40,7 +40,7 @@ class UploadManager {
       throw new Error(`Service "${serviceName}" not available`);
     }
     this.defaultService = serviceName;
-    info(`Default upload service set to: ${serviceName}`);
+    log(`Default upload service set to: ${serviceName}`);
   }
 
   /**
@@ -69,7 +69,7 @@ class UploadManager {
       const service = this.getService(serviceName);
       const result = await service.uploadFile(options);
 
-      info(`File uploaded successfully using ${serviceName}: ${result}`);
+      log(`File uploaded successfully using ${serviceName}: ${result}`);
       return {
         url: result,
         service: serviceName,
@@ -93,7 +93,7 @@ class UploadManager {
       const service = this.getService(serviceName);
       const result = await service.uploadFromURL(options);
 
-      info(`URL uploaded successfully using ${serviceName}: ${result}`);
+      log(`URL uploaded successfully using ${serviceName}: ${result}`);
       return {
         url: result,
         service: serviceName,
@@ -113,7 +113,7 @@ class UploadManager {
       const service = this.getService(serviceName);
       const result = await service.uploadFromBuffer(options);
 
-      info(`Buffer uploaded successfully using ${serviceName}: ${result}`);
+      log(`Buffer uploaded successfully using ${serviceName}: ${result}`);
       return {
         url: result,
         service: serviceName,
@@ -131,7 +131,7 @@ class UploadManager {
   setCatboxUserHash(userHash) {
     const catboxService = this.getService(UPLOAD_SERVICES.CATBOX);
     catboxService.setUserHash(userHash);
-    info("Catbox user hash configured");
+    log("Catbox user hash configured");
   }
 
   /**
@@ -142,7 +142,7 @@ class UploadManager {
       const catboxService = this.getService(UPLOAD_SERVICES.CATBOX);
       const result = await catboxService.createAlbum(options);
 
-      info(`Album created successfully: ${result}`);
+      log(`Album created successfully: ${result}`);
       return result;
     } catch (err) {
       error(`Album creation failed: ${err.message}`);
@@ -158,7 +158,7 @@ class UploadManager {
       const catboxService = this.getService(UPLOAD_SERVICES.CATBOX);
       const result = await catboxService.deleteFiles(options);
 
-      info(`Files deleted successfully`);
+      log(`Files deleted successfully`);
       return result;
     } catch (err) {
       error(`File deletion failed: ${err.message}`);

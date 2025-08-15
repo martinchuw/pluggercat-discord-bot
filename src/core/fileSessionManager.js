@@ -1,7 +1,7 @@
 const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
 const { ROOT_DIR } = require("../config");
-const { error, info } = require("../utils/logger");
+const { error, log } = require("../utils/logger");
 
 const fileSessions = new Map();
 
@@ -71,7 +71,7 @@ function createFileSession(userId) {
 function getFileSession(userId) {
   if (!fileSessions.has(userId)) {
     fileSessions.set(userId, createFileSession(userId));
-    info(`Created file session for user: ${userId}`);
+    log(`Created file session for user: ${userId}`);
   }
   return fileSessions.get(userId);
 }
@@ -81,7 +81,7 @@ function deleteFileSession(userId) {
   if (session) {
     session.db.close();
     fileSessions.delete(userId);
-    info(`Deleted file session for user: ${userId}`);
+    log(`Deleted file session for user: ${userId}`);
   }
 }
 
@@ -170,7 +170,7 @@ async function saveUploadedFile(userId, fileData) {
     // Update user stats
     await updateUserStats(userId, fileData.fileSize || 0);
 
-    info(`File saved for user ${userId}: ${fileData.originalFilename}`);
+    log(`File saved for user ${userId}: ${fileData.originalFilename}`);
     return fileId;
   } catch (err) {
     error(`Error saving uploaded file: ${err.message}`);
@@ -252,7 +252,7 @@ async function deleteUserFile(userId, fileId) {
     );
 
     if (result.changes > 0) {
-      info(`File deleted for user ${userId}: ${fileId}`);
+      log(`File deleted for user ${userId}: ${fileId}`);
       return true;
     }
     return false;

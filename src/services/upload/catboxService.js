@@ -2,7 +2,7 @@ const fs = require("fs").promises;
 const path = require("path");
 const FormData = require("form-data");
 const fetch = require("node-fetch");
-const { error, info } = require("../../utils/logger");
+const { error } = require("../../utils/logger");
 
 const CATBOX_API_ENDPOINT = "https://catbox.moe/user/api.php";
 const USER_AGENT = "plugger-cat-bot";
