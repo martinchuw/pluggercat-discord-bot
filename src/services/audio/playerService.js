@@ -5,77 +5,169 @@ const {
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus,
-  VoiceConnectionStatus
+  VoiceConnectionStatus,
 } = require("@discordjs/voice");
 
 const { TEMP_MUSIC_DIR } = require("../../config");
 const { getSession, runDb } = require("../../core/sessionManager");
 const extractVideoId = require("../../utils/extractVideoId");
 const sleep = require("../../utils/sleep");
-const { downloadWithYtDlp } = require("./downloader");
+const { downloadWithYtDlp, downloadWithSpotDL } = require("./downloader");
 const { log, error } = require("../../utils/logger");
 
-async function play(interaction, url) {
+const {
+  isSpotifyUrl,
+  isSoundcloudUrl,
+  isYouTubeUrl,
+  isYouTubeMusicUrl,
+  detectPlatform,
+} = require("../../utils/platformDetector");
+const {
+  getSpotifyMetaWithPuppeteer,
+} = require("../../services/audio/spotifyPuppeteer");
+const { ytSearchFirst, getYtDlpInfo } = require("../../services/audio/ytdlpService");
+
+async function play(interaction, query, options = {}) {
   const guildId = interaction.guild.id;
   const voiceChannel = interaction.member?.voice?.channel;
-  if (!voiceChannel) {
-    return interaction.reply("You must join a voice channel first.");
-  }
-
-  await interaction.deferReply();
+  if (!voiceChannel)
+    return interaction.editReply("You must join a voice channel first.");
 
   const session = getSession(guildId);
+
   let videoId;
+  let effectiveUrl = query;
+  const { platform, isUrl } = options;
+
   try {
-    videoId = extractVideoId(url);
+    // Handle search terms (non-URLs)
+    if (!isUrl) {
+      const found = await ytSearchFirst(query);
+      if (!found) throw new Error("No results found on YouTube");
+      videoId = found.id;
+      effectiveUrl = found.url;
+    } else {
+      const detectedPlatform = platform || detectPlatform(query);
+
+      switch (detectedPlatform) {
+        case "spotify":
+          if (!isSpotifyUrl(query))
+            throw new Error("Invalid Spotify URL format");
+          const meta = await getSpotifyMetaWithPuppeteer(query, {
+            headless: "new",
+            timeoutMs: 20000,
+            retries: 1,
+            waitUntil: "domcontentloaded",
+            blockMedia: true,
+          });
+          if (!meta?.title)
+            throw new Error("No title from Spotify via scraping");
+          const searchQuery = meta.artist
+            ? `${meta.title} ${meta.artist}`
+            : meta.title;
+          const found = await ytSearchFirst(searchQuery);
+          if (!found)
+            throw new Error("No YouTube equivalent found for Spotify track");
+          videoId = found.id;
+          effectiveUrl = found.url;
+          break;
+
+        case "soundcloud":
+          if (!isSoundcloudUrl(query))
+            throw new Error("Invalid SoundCloud URL format");
+          const info = await getYtDlpInfo(query);
+          if (!info?.id) throw new Error("No SoundCloud id from yt-dlp");
+          videoId = `sc_${info.id}`;
+          effectiveUrl = query;
+          break;
+
+        case "youtube_music":
+          if (!isYouTubeMusicUrl(query))
+            throw new Error("Invalid YouTube Music URL format");
+          videoId = extractVideoId(query);
+          if (!videoId)
+            throw new Error(
+              "Could not extract video ID from YouTube Music URL"
+            );
+          effectiveUrl = query;
+          break;
+
+        case "youtube":
+          if (!isYouTubeUrl(query))
+            throw new Error("Invalid YouTube URL format");
+          videoId = extractVideoId(query);
+          if (!videoId) throw new Error("Invalid YouTube URL");
+          effectiveUrl = query;
+          break;
+
+        default:
+          // Fallback: try to extract as YouTube URL
+          videoId = extractVideoId(query);
+          if (!videoId) throw new Error("Unsupported URL format");
+          effectiveUrl = query;
+      }
+    }
   } catch (e) {
-    return interaction.editReply("Invalid YouTube URL.");
+    error("Resolve error:", e);
+    const platformName = platform || (isUrl ? detectPlatform(query) : "search");
+    return interaction.editReply(
+      `Failed to process ${platformName} ${isUrl ? "URL" : "search"}: ${
+        e.message
+      }`
+    );
   }
 
   const filePath = path.join(TEMP_MUSIC_DIR, `${videoId}.mp3`);
 
-  // Upsert queue entry
   let songData;
   try {
     await new Promise((resolve, reject) => {
-      session.db.get("SELECT * FROM queue WHERE video_id = ?", [videoId], async (err, row) => {
-        if (err) return reject(err);
+      session.db.get(
+        "SELECT * FROM queue WHERE video_id = ?",
+        [videoId],
+        async (err, row) => {
+          if (err) return reject(err);
 
-        if (row) {
-          session.db.run("UPDATE queue SET download_count = download_count + 1 WHERE video_id = ?", [videoId]);
-          songData = {
-            videoId: row.video_id,
-            url: row.url,
-            filePath: row.file_path,
-            downloadCount: row.download_count + 1
-          };
-          resolve();
-        } else {
-          try {
-            await downloadWithYtDlp({ url, outPath: filePath });
-            await sleep(500);
-
+          if (row) {
+            session.db.run(
+              "UPDATE queue SET download_count = download_count + 1 WHERE video_id = ?",
+              [videoId]
+            );
             songData = {
-              videoId,
-              url,
-              filePath,
-              downloadCount: 1
+              videoId: row.video_id,
+              url: row.url,
+              filePath: row.file_path,
+              downloadCount: row.download_count + 1,
             };
-            session.db.run("INSERT INTO queue (video_id, url, file_path) VALUES (?, ?, ?)", [videoId, url, filePath], (e2) => {
-              if (e2) reject(e2); else resolve();
-            });
-          } catch (dErr) {
-            reject(dErr);
+            resolve();
+          } else {
+            try {
+              await downloadWithYtDlp({ url: effectiveUrl, outPath: filePath });
+              await sleep(300);
+
+              songData = {
+                videoId,
+                url: effectiveUrl,
+                filePath,
+                downloadCount: 1,
+              };
+              session.db.run(
+                "INSERT INTO queue (video_id, url, file_path) VALUES (?, ?, ?)",
+                [videoId, effectiveUrl, filePath],
+                (e2) => (e2 ? reject(e2) : resolve())
+              );
+            } catch (dErr) {
+              reject(dErr);
+            }
           }
         }
-      });
+      );
     });
   } catch (dbErr) {
     error("DB/Download error:", dbErr);
     return interaction.editReply("Failed to process the request.");
   }
 
-  // Enqueue in memory
   session.queue.push(songData);
 
   if (!session.isPlaying) {
@@ -83,7 +175,7 @@ async function play(interaction, url) {
   }
 
   const pos = session.queue.length;
-  return interaction.editReply(`Queued (#${pos}): ${url}`);
+  return interaction.editReply(`Queued (#${pos}): ${songData.url}`);
 }
 
 async function playNext(interaction) {
@@ -103,11 +195,14 @@ async function playNext(interaction) {
   }
 
   // Connect if needed
-  if (!session.connection || session.connection.state.status === VoiceConnectionStatus.Disconnected) {
+  if (
+    !session.connection ||
+    session.connection.state.status === VoiceConnectionStatus.Disconnected
+  ) {
     session.connection = joinVoiceChannel({
       channelId: voiceChannel.id,
       guildId: guildId,
-      adapterCreator: interaction.guild.voiceAdapterCreator
+      adapterCreator: interaction.guild.voiceAdapterCreator,
     });
 
     await new Promise((resolve) => {
@@ -140,13 +235,17 @@ async function playNext(interaction) {
     }
 
     setTimeout(async () => {
-      const stillQueued = session.queue.some(s => s.videoId === finished.videoId);
+      const stillQueued = session.queue.some(
+        (s) => s.videoId === finished.videoId
+      );
       if (!stillQueued && finished.downloadCount === 1) {
         try {
           if (fs.existsSync(finished.filePath)) {
             fs.unlinkSync(finished.filePath);
           }
-          await runDb(session, "DELETE FROM queue WHERE video_id = ?", [finished.videoId]);
+          await runDb(session, "DELETE FROM queue WHERE video_id = ?", [
+            finished.videoId,
+          ]);
         } catch (e) {
           // best-effort cleanup
         }
@@ -168,7 +267,10 @@ async function playNext(interaction) {
 
 async function pause(interaction) {
   const session = getSession(interaction.guild.id);
-  if (session.currentPlayer && session.currentPlayer.state.status === "playing") {
+  if (
+    session.currentPlayer &&
+    session.currentPlayer.state.status === "playing"
+  ) {
     session.currentPlayer.pause();
     return interaction.reply("Paused.");
   }
@@ -177,7 +279,10 @@ async function pause(interaction) {
 
 async function resume(interaction) {
   const session = getSession(interaction.guild.id);
-  if (session.currentPlayer && session.currentPlayer.state.status === "paused") {
+  if (
+    session.currentPlayer &&
+    session.currentPlayer.state.status === "paused"
+  ) {
     session.currentPlayer.unpause();
     return interaction.reply("Resumed.");
   }
@@ -223,5 +328,5 @@ module.exports = {
   resume,
   skip,
   stop,
-  getQueueText
+  getQueueText,
 };
