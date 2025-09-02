@@ -4,3 +4,4 @@ tempmusic
 session_*.db
 npm-debug.log*
 yarn-error.log*
+token.txt
